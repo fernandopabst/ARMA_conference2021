@@ -1,0 +1,24 @@
+# An instance of the Excel software is launched and pointed towards the document path you provided in the ExcelDocumentPath variable
+Excel.LaunchAndOpen Path: ExcelDocumentPath Visible: False ReadOnly: False LoadAddInsAndMacros: False Instance=> ExcelInstance
+# We then look for the first free row in column A to determine how long the list of DOIs is
+Excel.GetFirstFreeColumnRow Instance: ExcelInstance FirstFreeColumn=> FirstFreeColumn FirstFreeRow=> FirstFreeRow
+# We tell PAD to read all values in the identified range, saving them to a table variable
+Excel.ReadCells Instance: ExcelInstance StartColumn: $'''A''' StartRow: 1 EndColumn: $'''A''' EndRow: FirstFreeRow - 1 ReadAsText: False FirstLineIsHeader: False RangeValue=> ExcelData
+Variables.CreateNewList List=> OAList
+# After creating an empty table variable that we will use to store our API responses later, we will initiate a loop that will run n number of times, n being the total length of our DOI list (so once for every DOI provided in the Excel column)
+LOOP LoopIndex FROM 0 TO ExcelData.RowsCount - 1 STEP 1
+    # For every iteration of the loop, we tell PAD to query Unpaywall's API and, if the response's status code is 200 (meaning it was successful), we tell it to add that response's "oa_status" value into our table variable. If the response does not come with a status code of 200, we tell it to add a placeholder text instead
+    Web.InvokeWebService Url: $'''https://api.unpaywall.org/v2/%ExcelData[LoopIndex]%?email=%Email%''' Method: Web.Method.Get Accept: $'''application/json''' ContentType: $'''application/json''' ConnectionTimeout: 30 FollowRedirection: True ClearCookies: False FailOnErrorStatus: False EncodeRequestBody: True UserAgent: $'''Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.21) Gecko/20100312 Firefox/3.6''' Encoding: Web.Encoding.AutoDetect AcceptUntrustedCertificates: False ResponseHeaders=> WebServiceResponseHeaders Response=> WebServiceResponse StatusCode=> StatusCode
+    IF StatusCode = 200 THEN
+        Variables.ConvertJsonToCustomObject Json: WebServiceResponse CustomObject=> Object
+        Variables.AddItemToList Item: Object['oa_status'] List: OAList NewList=> OAList
+    ELSE IF StatusCode <> 200 THEN
+        Variables.AddItemToList Item: $'''DOI incorrect or not found''' List: OAList NewList=> OAList
+    END
+END
+# After the loop finishes, we ask PAD to write the whole table variable of responses to the B column in our Excel spreadsheet, close it down, and display a message of all the responses logged from the API
+Excel.WriteCell Instance: ExcelInstance Value: OAList Column: $'''B''' Row: 1
+Excel.Close Instance: ExcelInstance
+Display.ShowMessage Title: $'''Found values''' Message: $'''Found the below values by querying the Unpaywall API:
+%OAList%''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed
+EXIT Code: 0
